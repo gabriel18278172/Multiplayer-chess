@@ -1,0 +1,256 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap");
+
+:root {
+  --bg: #0d141e;
+  --bg-soft: #121e2c;
+  --panel: rgba(12, 20, 30, 0.8);
+  --text: #e9eef7;
+  --muted: #9fb0c5;
+  --accent: #8acb88;
+  --accent-strong: #6fb56e;
+  --stroke: rgba(255, 255, 255, 0.12);
+  --danger: #f27f7f;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Sora", sans-serif;
+  background: radial-gradient(circle at 10% 10%, #1d2d45 0%, transparent 32%),
+    radial-gradient(circle at 85% 15%, #214c46 0%, transparent 30%),
+    linear-gradient(135deg, #0d141e 0%, #0a1118 100%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.page {
+  position: relative;
+  min-height: 100vh;
+  padding: 2rem;
+  overflow-x: hidden;
+}
+
+.ambient {
+  position: absolute;
+  pointer-events: none;
+  filter: blur(60px);
+  opacity: 0.45;
+  animation: drift 8s ease-in-out infinite alternate;
+}
+
+.ambient-one {
+  width: 20rem;
+  height: 20rem;
+  left: -6rem;
+  top: 10rem;
+  background: #2f5f4f;
+}
+
+.ambient-two {
+  width: 22rem;
+  height: 22rem;
+  right: -8rem;
+  top: -4rem;
+  background: #244d62;
+}
+
+.topbar {
+  position: relative;
+  margin: 0 auto 1.5rem;
+  width: min(1200px, 100%);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 2.8vw, 2.8rem);
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.topbar p {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+}
+
+.layout {
+  position: relative;
+  z-index: 1;
+  margin: 0 auto;
+  width: min(1200px, 100%);
+  display: grid;
+  grid-template-columns: 1fr 330px;
+  gap: 1.2rem;
+}
+
+.board-card,
+.panel {
+  backdrop-filter: blur(10px);
+  background: var(--panel);
+  border: 1px solid var(--stroke);
+  border-radius: 1rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+}
+
+.board-card {
+  padding: 1.2rem;
+}
+
+.board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.board-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.room-code {
+  margin: 0.3rem 0 0;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.status-pill {
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(138, 203, 136, 0.15);
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
+input,
+button {
+  border-radius: 0.7rem;
+  border: 1px solid var(--stroke);
+  background: #132130;
+  color: var(--text);
+  padding: 0.7rem 0.85rem;
+  font: inherit;
+}
+
+input:focus,
+button:focus {
+  outline: 2px solid rgba(138, 203, 136, 0.45);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+  background: linear-gradient(180deg, #87c783 0%, #6fb56e 100%);
+  color: #0f1a13;
+  border: 0;
+  font-weight: 700;
+  transition: transform 140ms ease, filter 140ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+}
+
+button.ghost {
+  background: #223447;
+  color: var(--text);
+  border: 1px solid var(--stroke);
+}
+
+.error-box {
+  margin-bottom: 1rem;
+  background: rgba(242, 127, 127, 0.13);
+  border: 1px solid rgba(242, 127, 127, 0.4);
+  color: #ffd3d3;
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.7rem;
+}
+
+.board-wrap {
+  width: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.sidebar {
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.panel {
+  padding: 1rem;
+}
+
+.panel h3 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.panel p {
+  margin: 0.4rem 0;
+  color: #d2def0;
+}
+
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.45rem 0;
+}
+
+.moves {
+  max-height: 12rem;
+  overflow: auto;
+  border-top: 1px solid var(--stroke);
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+@keyframes drift {
+  from {
+    transform: translateY(0px);
+  }
+  to {
+    transform: translateY(10px);
+  }
+}
+
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 1rem;
+  }
+
+  .join-row {
+    grid-template-columns: 1fr;
+  }
+
+  .board-wrap > div {
+    width: min(100%, 90vw) !important;
+  }
+}
