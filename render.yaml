@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: multiplayer-chess-server
+    runtime: node
+    rootDir: .
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start --workspace server
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: CLIENT_URL
+        sync: false
+      - key: PORT
+        value: 10000

@@ -5,8 +5,22 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { Chess } from "chess.js";
 
+function parseCorsOrigins(value) {
+  if (!value) return "*";
+  const origins = value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (origins.length === 0) return "*";
+  if (origins.length === 1) return origins[0];
+  return origins;
+}
+
+const corsOrigins = parseCorsOrigins(process.env.CLIENT_URL);
+
 const app = express();
-app.use(cors({ origin: process.env.CLIENT_URL || "*" }));
+app.use(cors({ origin: corsOrigins }));
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
@@ -16,7 +30,7 @@ app.get("/health", (_req, res) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || "*",
+    origin: corsOrigins,
     methods: ["GET", "POST"]
   }
 });
