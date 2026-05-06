@@ -3,7 +3,8 @@ import { io } from "socket.io-client";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3001";
+const SERVER_URL =
+  import.meta.env.VITE_SERVER_URL || "https://multiplayer-chess-server-b93r.onrender.com";
 
 function makeRoomCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
