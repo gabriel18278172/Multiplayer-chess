@@ -3,17 +3,17 @@ import { io } from "socket.io-client";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 
-const SERVER_URL =
-  import.meta.env.VITE_SERVER_URL || "https://multiplayer-chess-server-b93r.onrender.com";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3001";
 
 function makeRoomCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
-function getGameStatus(chess, isGameOver) {
+function getGameStatus(chess, isGameOver, turn) {
   if (!isGameOver) {
-    const turn = chess.turn() === "w" ? "White" : "Black";
-    return `${turn} to move`;
+    const nextTurn = turn === "w" ? "White" : "Black";
+    if (chess.inCheck()) return `${nextTurn} to move (in check)`;
+    return `${nextTurn} to move`;
   }
 
   if (chess.isCheckmate()) {
@@ -31,6 +31,7 @@ function getGameStatus(chess, isGameOver) {
 function App() {
   const [socket, setSocket] = useState(null);
   const [connection, setConnection] = useState("Connecting...");
+  const [queueStatus, setQueueStatus] = useState("idle");
 
   const [roomInput, setRoomInput] = useState(makeRoomCode());
   const [roomId, setRoomId] = useState("");
@@ -50,6 +51,17 @@ function App() {
     return game;
   }, [fen]);
 
+  const ingestState = (state) => {
+    setFen(state.fen);
+    setTurn(state.turn);
+    setIsGameOver(state.isGameOver);
+    setPlayers(state.players || { w: null, b: null });
+
+    const game = new Chess();
+    game.load(state.fen);
+    setMoveList(game.history());
+  };
+
   useEffect(() => {
     const nextSocket = io(SERVER_URL, {
       transports: ["websocket", "polling"]
@@ -58,34 +70,21 @@ function App() {
     setSocket(nextSocket);
 
     nextSocket.on("connect", () => setConnection("Connected"));
-    nextSocket.on("disconnect", () => setConnection("Disconnected"));
-
-    nextSocket.on("room_update", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
-      setPlayers(state.players);
-
-      const game = new Chess();
-      game.load(state.fen);
-      setMoveList(game.history());
+    nextSocket.on("disconnect", () => {
+      setConnection("Disconnected");
+      setQueueStatus("idle");
     });
 
-    nextSocket.on("move_made", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
+    nextSocket.on("room_update", ingestState);
+    nextSocket.on("move_made", ingestState);
+    nextSocket.on("game_restarted", ingestState);
 
-      const game = new Chess();
-      game.load(state.fen);
-      setMoveList(game.history());
-    });
-
-    nextSocket.on("game_restarted", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
-      setMoveList([]);
+    nextSocket.on("match_found", (state) => {
+      setLastError("");
+      setQueueStatus("matched");
+      setRoomId(state.roomId);
+      setPlayerColor(state.you);
+      ingestState(state);
     });
 
     return () => {
@@ -109,16 +108,29 @@ function App() {
       }
 
       setLastError("");
+      setQueueStatus("manual");
       setRoomId(response.roomId);
       setPlayerColor(response.you);
-      setFen(response.fen);
-      setTurn(response.turn);
-      setIsGameOver(response.isGameOver);
-      setPlayers(response.players);
+      ingestState(response);
+    });
+  };
 
-      const game = new Chess();
-      game.load(response.fen);
-      setMoveList(game.history());
+  const playNow = () => {
+    if (!socket) return;
+    setLastError("");
+    setQueueStatus("seeking");
+    socket.emit("seek_match", (response) => {
+      if (!response?.ok) {
+        setQueueStatus("idle");
+        setLastError(response?.message || "Could not enter queue.");
+      }
+    });
+  };
+
+  const cancelSeek = () => {
+    if (!socket) return;
+    socket.emit("cancel_seek", () => {
+      setQueueStatus("idle");
     });
   };
 
@@ -177,7 +189,7 @@ function App() {
 
       <header className="topbar">
         <h1>Realtime Chess Arena</h1>
-        <p>Node.js Multiplayer • Chess.com-inspired style</p>
+        <p>Fast matchmaking • Live multiplayer • Highly polished boardplay</p>
       </header>
 
       <main className="layout">
@@ -185,9 +197,20 @@ function App() {
           <div className="board-header">
             <div>
               <h2>Match Room</h2>
-              <p className="room-code">{roomId || "Not joined yet"}</p>
+              <p className="room-code">{roomId || "Press Play to seek a match"}</p>
             </div>
             <div className="status-pill">{connection}</div>
+          </div>
+
+          <div className="play-row">
+            <button className="primary-play" onClick={playNow} disabled={queueStatus === "seeking"}>
+              {queueStatus === "seeking" ? "Seeking Opponent..." : "Play"}
+            </button>
+            {queueStatus === "seeking" ? (
+              <button className="ghost" onClick={cancelSeek}>
+                Cancel
+              </button>
+            ) : null}
           </div>
 
           <div className="join-row">
@@ -195,7 +218,7 @@ function App() {
               value={roomInput}
               onChange={(e) => setRoomInput(e.target.value)}
               placeholder="Enter room code"
-              maxLength={10}
+              maxLength={14}
             />
             <button onClick={joinRoom}>Join Room</button>
             <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
@@ -222,9 +245,9 @@ function App() {
         <aside className="sidebar">
           <div className="panel">
             <h3>Game Status</h3>
-            <p>{getGameStatus(chess, isGameOver)}</p>
-            <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Observer"}</p>
-            <p>Turn key: {turn.toUpperCase()}</p>
+            <p>{getGameStatus(chess, isGameOver, turn)}</p>
+            <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Not assigned"}</p>
+            <p>Queue: {queueStatus}</p>
             <button onClick={requestRestart}>Restart Match</button>
           </div>
 
