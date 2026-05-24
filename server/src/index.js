@@ -189,6 +189,7 @@ io.on("connection", (socket) => {
 
     socket.join(normalizedRoomId);
     socket.data.roomId = normalizedRoomId;
+    activeMatchBySocket.set(socket.id, normalizedRoomId);
 
     callback({ ok: true, ...getPublicRoomState(room), you: assignedColor });
     io.to(normalizedRoomId).emit("room_update", getPublicRoomState(room));
