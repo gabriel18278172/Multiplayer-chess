@@ -158,10 +158,16 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const normalizedRoomId = roomId.trim().toUpperCase();
-    if (!normalizedRoomId) {
-      callback({ ok: false, message: "Room code cannot be empty." });
-      return;
+function releasePlayerFromRoom(socketId) {
+  for (const [roomId, room] of rooms.entries()) {
+    let changed = false;
+    if (room.players.w === socketId) {
+      room.players.w = null;
+      changed = true;
+    }
+    if (room.players.b === socketId) {
+      room.players.b = null;
+      changed = true;
     }
 
     removeFromQueue(socket.id);
@@ -174,17 +180,52 @@ io.on("connection", (socket) => {
       room = createRoomState(normalizedRoomId);
       rooms.set(normalizedRoomId, room);
     }
+  }
+}
 
-    let assignedColor = null;
-    if (!room.players.w) {
-      room.players.w = socket.id;
-      assignedColor = "w";
-    } else if (!room.players.b) {
-      room.players.b = socket.id;
-      assignedColor = "b";
-    } else {
-      callback({ ok: false, message: "Room is full." });
-      return;
+function leaveTrackedRooms(socket) {
+  for (const roomId of socket.rooms) {
+    if (roomId !== socket.id) socket.leave(roomId);
+  }
+}
+
+function clearPlayerState(socket) {
+  removeFromQueue(socket.id);
+  leaveTrackedRooms(socket);
+  releasePlayerFromRoom(socket.id);
+  socket.data.roomId = null;
+}
+
+function emitQueueSize() {
+  io.emit("queue_size", { size: seekQueue.length });
+}
+
+function startMatchIfPossible() {
+  while (seekQueue.length >= 2) {
+    const first = seekQueue.shift();
+    const second = seekQueue.shift();
+
+    const firstSocket = io.sockets.sockets.get(first.socketId);
+    const secondSocket = io.sockets.sockets.get(second.socketId);
+
+    if (!firstSocket || !secondSocket) continue;
+
+    const whiteFirst = Math.random() >= 0.5;
+    const whiteSocket = whiteFirst ? firstSocket : secondSocket;
+    const blackSocket = whiteFirst ? secondSocket : firstSocket;
+
+    const roomId = createMatchRoomId();
+    const room = createRoomState(roomId);
+    room.players.w = whiteSocket.id;
+    room.players.b = blackSocket.id;
+    rooms.set(roomId, room);
+
+    for (const socket of [whiteSocket, blackSocket]) {
+      removeFromQueue(socket.id);
+      leaveTrackedRooms(socket);
+      releasePlayerFromRoom(socket.id);
+      socket.join(roomId);
+      socket.data.roomId = roomId;
     }
 
     socket.join(normalizedRoomId);
@@ -255,20 +296,6 @@ io.on("connection", (socket) => {
     } catch {
       callback({ ok: false, message: "Move failed." });
     }
-  });
-
-  socket.on("request_restart", ({ roomId }, callback = () => {}) => {
-    const normalizedRoomId = (roomId || "").toUpperCase();
-    const room = rooms.get(normalizedRoomId);
-    if (!room) {
-      callback({ ok: false, message: "Room not found." });
-      return;
-    }
-
-    room.game.reset();
-    const state = getPublicRoomState(room);
-    io.to(normalizedRoomId).emit("game_restarted", state);
-    callback({ ok: true, ...state });
   });
 
   socket.on("disconnect", () => {

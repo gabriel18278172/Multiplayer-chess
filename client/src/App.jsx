@@ -5,10 +5,6 @@ import { Chessboard } from "react-chessboard";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3001";
 
-function makeRoomCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
-}
-
 function getGameStatus(chess, isGameOver, turn) {
   if (!isGameOver) {
     const nextTurn = turn === "w" ? "White" : "Black";
@@ -34,7 +30,6 @@ function App() {
   const [queueStatus, setQueueStatus] = useState("idle");
   const [queueSize, setQueueSize] = useState(0);
 
-  const [roomInput, setRoomInput] = useState(makeRoomCode());
   const [roomId, setRoomId] = useState("");
   const [playerColor, setPlayerColor] = useState(null);
 
@@ -79,10 +74,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const nextSocket = io(SERVER_URL, {
-      transports: ["websocket", "polling"]
-    });
-
+    const nextSocket = io(SERVER_URL, { transports: ["websocket", "polling"] });
     setSocket(nextSocket);
 
     nextSocket.on("connect", () => setConnection("Connected"));
@@ -94,7 +86,6 @@ function App() {
     nextSocket.on("queue_size", ({ size }) => setQueueSize(Number(size || 0)));
     nextSocket.on("room_update", ingestState);
     nextSocket.on("move_made", ingestState);
-    nextSocket.on("game_restarted", ingestState);
 
     nextSocket.on("match_found", (state) => {
       setLastError("");
@@ -104,64 +95,35 @@ function App() {
       ingestState(state);
     });
 
-    return () => {
-      nextSocket.disconnect();
-    };
+    return () => nextSocket.disconnect();
   }, []);
-
-  const joinRoom = () => {
-    if (!socket) return;
-
-    const code = roomInput.trim().toUpperCase();
-    if (!code) {
-      setLastError("Room code cannot be empty.");
-      return;
-    }
-
-    socket.emit("join_room", { roomId: code }, (response) => {
-      if (!response.ok) {
-        setLastError(response.message || "Could not join room.");
-        return;
-      }
-
-      setLastError("");
-      setQueueStatus("manual");
-      setRoomId(response.roomId);
-      setPlayerColor(response.you);
-      ingestState(response);
-    });
-  };
 
   const playNow = () => {
     if (!socket) return;
     setLastError("");
     setQueueStatus("seeking");
-    socket.emit("leave_room", () => {
-      setRoomId("");
-      setPlayerColor(null);
-      socket.emit("seek_match", (response) => {
-        if (!response?.ok) {
-          setQueueStatus("idle");
-          setLastError(response?.message || "Could not enter queue.");
-        }
-      });
+    socket.emit("seek_match", (response) => {
+      if (!response?.ok) {
+        setQueueStatus("idle");
+        setLastError(response?.message || "Could not enter queue.");
+      }
     });
   };
 
   const cancelSeek = () => {
     if (!socket) return;
     socket.emit("cancel_seek", (response) => {
-      if (!response?.ok) {
+      if (!response?.ok || !response?.removed) {
         setLastError("Could not cancel queue.");
         return;
       }
       setQueueStatus("idle");
+      setLastError("");
     });
   };
 
   const onPieceDrop = (sourceSquare, targetSquare, piece) => {
     if (!socket || !roomId || isGameOver) return false;
-
     if (!playerColor || turn !== playerColor) {
       setLastError("It is not your turn.");
       return false;
@@ -171,36 +133,12 @@ function App() {
     const promotionRank = playerColor === "w" ? "8" : "1";
     const promotion = movingPawn && targetSquare.endsWith(promotionRank) ? "q" : undefined;
 
-    socket.emit(
-      "make_move",
-      {
-        roomId,
-        move: {
-          from: sourceSquare,
-          to: targetSquare,
-          promotion
-        }
-      },
-      (response) => {
-        if (!response.ok) {
-          setLastError(response.message || "Illegal move.");
-          return;
-        }
-
-        setLastError("");
-      }
-    );
+    socket.emit("make_move", { roomId, move: { from: sourceSquare, to: targetSquare, promotion } }, (response) => {
+      if (!response.ok) setLastError(response.message || "Illegal move.");
+      else setLastError("");
+    });
 
     return true;
-  };
-
-  const requestRestart = () => {
-    if (!socket || !roomId) return;
-    socket.emit("request_restart", { roomId }, (response) => {
-      if (!response.ok) {
-        setLastError(response.message || "Could not restart.");
-      }
-    });
   };
 
   const whiteReady = Boolean(players.w);
@@ -249,6 +187,9 @@ function App() {
             <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
               New Code
             </button>
+            {queueStatus === "seeking" ? (
+              <button className="ghost" onClick={cancelSeek}>Cancel</button>
+            ) : null}
           </div>
 
           {lastError ? <div className="error-box">{lastError}</div> : null}
@@ -279,24 +220,14 @@ function App() {
 
           <div className="panel">
             <h3>Players</h3>
-            <div className="player-row">
-              <span>White</span>
-              <strong>{whiteReady ? "Connected" : "Waiting"}</strong>
-            </div>
-            <div className="player-row">
-              <span>Black</span>
-              <strong>{blackReady ? "Connected" : "Waiting"}</strong>
-            </div>
+            <div className="player-row"><span>White</span><strong>{whiteReady ? "Connected" : "Waiting"}</strong></div>
+            <div className="player-row"><span>Black</span><strong>{blackReady ? "Connected" : "Waiting"}</strong></div>
           </div>
 
           <div className="panel">
             <h3>Move List</h3>
             <div className="moves">
-              {moveList.length === 0 ? (
-                <p className="muted">No moves yet.</p>
-              ) : (
-                moveList.map((move, i) => <div key={`${move}-${i}`}>{i + 1}. {move}</div>)
-              )}
+              {moveList.length === 0 ? <p className="muted">No moves yet.</p> : moveList.map((move, i) => <div key={`${move}-${i}`}>{i + 1}. {move}</div>)}
             </div>
           </div>
         </aside>
