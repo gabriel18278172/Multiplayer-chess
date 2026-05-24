@@ -152,22 +152,40 @@ function App() {
 
       <header className="topbar">
         <h1>Realtime Chess Arena</h1>
-        <p>Tap Play and get matched instantly</p>
+        <p>Fast matchmaking • Live multiplayer • Mobile-ready boardplay</p>
       </header>
 
       <main className="layout">
         <section className="board-card">
           <div className="board-header">
             <div>
-              <h2>Live Match</h2>
-              <p className="room-code">{roomId || "Waiting for match..."}</p>
+              <h2>Match Room</h2>
+              <p className="room-code">{roomId || "Press Play to seek a match"}</p>
             </div>
             <div className="status-pill">{connection}</div>
           </div>
 
           <div className="play-row">
-            <button className="primary-play" onClick={playNow} disabled={queueStatus === "seeking" || queueStatus === "matched"}>
-              {queueStatus === "seeking" ? "Searching..." : queueStatus === "matched" ? "Matched" : "Play"}
+            <button className="primary-play" onClick={playNow} disabled={queueStatus === "seeking"}>
+              {queueStatus === "seeking" ? "Seeking Opponent..." : "Play"}
+            </button>
+            {queueStatus === "seeking" ? (
+              <button className="ghost" onClick={cancelSeek}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+
+          <div className="join-row">
+            <input
+              value={roomInput}
+              onChange={(e) => setRoomInput(e.target.value)}
+              placeholder="Enter room code"
+              maxLength={14}
+            />
+            <button onClick={joinRoom}>Join Room</button>
+            <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
+              New Code
             </button>
             {queueStatus === "seeking" ? (
               <button className="ghost" onClick={cancelSeek}>Cancel</button>
@@ -197,6 +215,7 @@ function App() {
             <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Not assigned"}</p>
             <p>Queue: {queueStatus}</p>
             <p>Players searching: {queueSize}</p>
+            <button onClick={requestRestart}>Restart Match</button>
           </div>
 
           <div className="panel">
