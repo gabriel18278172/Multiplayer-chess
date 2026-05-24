@@ -3,17 +3,13 @@ import { io } from "socket.io-client";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 
-const SERVER_URL =
-  import.meta.env.VITE_SERVER_URL || "https://multiplayer-chess-server-b93r.onrender.com";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3001";
 
-function makeRoomCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
-}
-
-function getGameStatus(chess, isGameOver) {
+function getGameStatus(chess, isGameOver, turn) {
   if (!isGameOver) {
-    const turn = chess.turn() === "w" ? "White" : "Black";
-    return `${turn} to move`;
+    const nextTurn = turn === "w" ? "White" : "Black";
+    if (chess.inCheck()) return `${nextTurn} to move (in check)`;
+    return `${nextTurn} to move`;
   }
 
   if (chess.isCheckmate()) {
@@ -31,8 +27,9 @@ function getGameStatus(chess, isGameOver) {
 function App() {
   const [socket, setSocket] = useState(null);
   const [connection, setConnection] = useState("Connecting...");
+  const [queueStatus, setQueueStatus] = useState("idle");
+  const [queueSize, setQueueSize] = useState(0);
 
-  const [roomInput, setRoomInput] = useState(makeRoomCode());
   const [roomId, setRoomId] = useState("");
   const [playerColor, setPlayerColor] = useState(null);
 
@@ -43,6 +40,7 @@ function App() {
 
   const [lastError, setLastError] = useState("");
   const [moveList, setMoveList] = useState([]);
+  const [boardWidth, setBoardWidth] = useState(560);
 
   const chess = useMemo(() => {
     const game = new Chess();
@@ -50,81 +48,82 @@ function App() {
     return game;
   }, [fen]);
 
-  useEffect(() => {
-    const nextSocket = io(SERVER_URL, {
-      transports: ["websocket", "polling"]
-    });
+  const ingestState = (state) => {
+    setFen(state.fen);
+    setTurn(state.turn);
+    setIsGameOver(state.isGameOver);
+    setPlayers(state.players || { w: null, b: null });
 
+    const game = new Chess();
+    game.load(state.fen);
+    setMoveList(game.history());
+  };
+
+  useEffect(() => {
+    const recalcBoard = () => {
+      const viewport = window.innerWidth;
+      if (viewport <= 460) setBoardWidth(Math.min(360, viewport - 24));
+      else if (viewport <= 720) setBoardWidth(Math.min(460, viewport - 36));
+      else if (viewport <= 980) setBoardWidth(520);
+      else setBoardWidth(560);
+    };
+
+    recalcBoard();
+    window.addEventListener("resize", recalcBoard);
+    return () => window.removeEventListener("resize", recalcBoard);
+  }, []);
+
+  useEffect(() => {
+    const nextSocket = io(SERVER_URL, { transports: ["websocket", "polling"] });
     setSocket(nextSocket);
 
     nextSocket.on("connect", () => setConnection("Connected"));
-    nextSocket.on("disconnect", () => setConnection("Disconnected"));
-
-    nextSocket.on("room_update", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
-      setPlayers(state.players);
-
-      const game = new Chess();
-      game.load(state.fen);
-      setMoveList(game.history());
+    nextSocket.on("disconnect", () => {
+      setConnection("Disconnected");
+      setQueueStatus("idle");
     });
 
-    nextSocket.on("move_made", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
+    nextSocket.on("queue_size", ({ size }) => setQueueSize(Number(size || 0)));
+    nextSocket.on("room_update", ingestState);
+    nextSocket.on("move_made", ingestState);
 
-      const game = new Chess();
-      game.load(state.fen);
-      setMoveList(game.history());
+    nextSocket.on("match_found", (state) => {
+      setLastError("");
+      setQueueStatus("matched");
+      setRoomId(state.roomId);
+      setPlayerColor(state.you);
+      ingestState(state);
     });
 
-    nextSocket.on("game_restarted", (state) => {
-      setFen(state.fen);
-      setTurn(state.turn);
-      setIsGameOver(state.isGameOver);
-      setMoveList([]);
-    });
-
-    return () => {
-      nextSocket.disconnect();
-    };
+    return () => nextSocket.disconnect();
   }, []);
 
-  const joinRoom = () => {
+  const playNow = () => {
     if (!socket) return;
+    setLastError("");
+    setQueueStatus("seeking");
+    socket.emit("seek_match", (response) => {
+      if (!response?.ok) {
+        setQueueStatus("idle");
+        setLastError(response?.message || "Could not enter queue.");
+      }
+    });
+  };
 
-    const code = roomInput.trim().toUpperCase();
-    if (!code) {
-      setLastError("Room code cannot be empty.");
-      return;
-    }
-
-    socket.emit("join_room", { roomId: code }, (response) => {
-      if (!response.ok) {
-        setLastError(response.message || "Could not join room.");
+  const cancelSeek = () => {
+    if (!socket) return;
+    socket.emit("cancel_seek", (response) => {
+      if (!response?.ok || !response?.removed) {
+        setLastError("Could not cancel queue.");
         return;
       }
-
+      setQueueStatus("idle");
       setLastError("");
-      setRoomId(response.roomId);
-      setPlayerColor(response.you);
-      setFen(response.fen);
-      setTurn(response.turn);
-      setIsGameOver(response.isGameOver);
-      setPlayers(response.players);
-
-      const game = new Chess();
-      game.load(response.fen);
-      setMoveList(game.history());
     });
   };
 
   const onPieceDrop = (sourceSquare, targetSquare, piece) => {
     if (!socket || !roomId || isGameOver) return false;
-
     if (!playerColor || turn !== playerColor) {
       setLastError("It is not your turn.");
       return false;
@@ -134,36 +133,12 @@ function App() {
     const promotionRank = playerColor === "w" ? "8" : "1";
     const promotion = movingPawn && targetSquare.endsWith(promotionRank) ? "q" : undefined;
 
-    socket.emit(
-      "make_move",
-      {
-        roomId,
-        move: {
-          from: sourceSquare,
-          to: targetSquare,
-          promotion
-        }
-      },
-      (response) => {
-        if (!response.ok) {
-          setLastError(response.message || "Illegal move.");
-          return;
-        }
-
-        setLastError("");
-      }
-    );
+    socket.emit("make_move", { roomId, move: { from: sourceSquare, to: targetSquare, promotion } }, (response) => {
+      if (!response.ok) setLastError(response.message || "Illegal move.");
+      else setLastError("");
+    });
 
     return true;
-  };
-
-  const requestRestart = () => {
-    if (!socket || !roomId) return;
-    socket.emit("request_restart", { roomId }, (response) => {
-      if (!response.ok) {
-        setLastError(response.message || "Could not restart.");
-      }
-    });
   };
 
   const whiteReady = Boolean(players.w);
@@ -177,30 +152,26 @@ function App() {
 
       <header className="topbar">
         <h1>Realtime Chess Arena</h1>
-        <p>Node.js Multiplayer • Chess.com-inspired style</p>
+        <p>Tap Play and get matched instantly</p>
       </header>
 
       <main className="layout">
         <section className="board-card">
           <div className="board-header">
             <div>
-              <h2>Match Room</h2>
-              <p className="room-code">{roomId || "Not joined yet"}</p>
+              <h2>Live Match</h2>
+              <p className="room-code">{roomId || "Waiting for match..."}</p>
             </div>
             <div className="status-pill">{connection}</div>
           </div>
 
-          <div className="join-row">
-            <input
-              value={roomInput}
-              onChange={(e) => setRoomInput(e.target.value)}
-              placeholder="Enter room code"
-              maxLength={10}
-            />
-            <button onClick={joinRoom}>Join Room</button>
-            <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
-              New Code
+          <div className="play-row">
+            <button className="primary-play" onClick={playNow} disabled={queueStatus === "seeking" || queueStatus === "matched"}>
+              {queueStatus === "seeking" ? "Searching..." : queueStatus === "matched" ? "Matched" : "Play"}
             </button>
+            {queueStatus === "seeking" ? (
+              <button className="ghost" onClick={cancelSeek}>Cancel</button>
+            ) : null}
           </div>
 
           {lastError ? <div className="error-box">{lastError}</div> : null}
@@ -209,7 +180,7 @@ function App() {
             <Chessboard
               id="multiplayer-chessboard"
               position={fen}
-              boardWidth={560}
+              boardWidth={boardWidth}
               onPieceDrop={onPieceDrop}
               arePiecesDraggable={bothPlayersReady && !isGameOver}
               boardOrientation={playerColor === "b" ? "black" : "white"}
@@ -222,32 +193,22 @@ function App() {
         <aside className="sidebar">
           <div className="panel">
             <h3>Game Status</h3>
-            <p>{getGameStatus(chess, isGameOver)}</p>
-            <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Observer"}</p>
-            <p>Turn key: {turn.toUpperCase()}</p>
-            <button onClick={requestRestart}>Restart Match</button>
+            <p>{getGameStatus(chess, isGameOver, turn)}</p>
+            <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Not assigned"}</p>
+            <p>Queue: {queueStatus}</p>
+            <p>Players searching: {queueSize}</p>
           </div>
 
           <div className="panel">
             <h3>Players</h3>
-            <div className="player-row">
-              <span>White</span>
-              <strong>{whiteReady ? "Connected" : "Waiting"}</strong>
-            </div>
-            <div className="player-row">
-              <span>Black</span>
-              <strong>{blackReady ? "Connected" : "Waiting"}</strong>
-            </div>
+            <div className="player-row"><span>White</span><strong>{whiteReady ? "Connected" : "Waiting"}</strong></div>
+            <div className="player-row"><span>Black</span><strong>{blackReady ? "Connected" : "Waiting"}</strong></div>
           </div>
 
           <div className="panel">
             <h3>Move List</h3>
             <div className="moves">
-              {moveList.length === 0 ? (
-                <p className="muted">No moves yet.</p>
-              ) : (
-                moveList.map((move, i) => <div key={`${move}-${i}`}>{i + 1}. {move}</div>)
-              )}
+              {moveList.length === 0 ? <p className="muted">No moves yet.</p> : moveList.map((move, i) => <div key={`${move}-${i}`}>{i + 1}. {move}</div>)}
             </div>
           </div>
         </aside>
