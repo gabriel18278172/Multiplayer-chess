@@ -36,14 +36,14 @@ const io = new Server(httpServer, {
 });
 
 const rooms = new Map();
-const activeMatchBySocket = new Map();
 let seekQueue = [];
 
 function createRoomState(roomId) {
   return {
     id: roomId,
     game: new Chess(),
-    players: { w: null, b: null }
+    players: { w: null, b: null },
+    createdAt: Date.now()
   };
 }
 
@@ -59,7 +59,8 @@ function getPublicRoomState(room) {
     turn: room.game.turn(),
     isGameOver: room.game.isGameOver(),
     inCheck: room.game.inCheck(),
-    players: room.players
+    players: room.players,
+    createdAt: room.createdAt
   };
 }
 
@@ -73,12 +74,6 @@ function removeFromQueue(socketId) {
   const initialLen = seekQueue.length;
   seekQueue = seekQueue.filter((entry) => entry.socketId !== socketId);
   return initialLen !== seekQueue.length;
-}
-
-function leaveTrackedRooms(socket) {
-  for (const joinedRoomId of socket.rooms) {
-    if (joinedRoomId !== socket.id) socket.leave(joinedRoomId);
-  }
 }
 
 function releasePlayerFromRoom(socketId) {
@@ -103,6 +98,59 @@ function releasePlayerFromRoom(socketId) {
   }
 }
 
+function leaveTrackedRooms(socket) {
+  for (const roomId of socket.rooms) {
+    if (roomId !== socket.id) socket.leave(roomId);
+  }
+}
+
+function currentPlayerRoomId(socketId) {
+  for (const room of rooms.values()) {
+    if (room.players.w === socketId || room.players.b === socketId) return room.id;
+  }
+  return null;
+}
+
+function emitQueueSize() {
+  io.emit("queue_size", { size: seekQueue.length });
+}
+
+function startMatchIfPossible() {
+  while (seekQueue.length >= 2) {
+    const first = seekQueue.shift();
+    const second = seekQueue.shift();
+
+    const firstSocket = io.sockets.sockets.get(first.socketId);
+    const secondSocket = io.sockets.sockets.get(second.socketId);
+
+    if (!firstSocket || !secondSocket) continue;
+
+    const whiteFirst = Math.random() >= 0.5;
+    const whiteSocket = whiteFirst ? firstSocket : secondSocket;
+    const blackSocket = whiteFirst ? secondSocket : firstSocket;
+
+    const roomId = createMatchRoomId();
+    const room = createRoomState(roomId);
+    room.players.w = whiteSocket.id;
+    room.players.b = blackSocket.id;
+    rooms.set(roomId, room);
+
+    for (const socket of [whiteSocket, blackSocket]) {
+      removeFromQueue(socket.id);
+      leaveTrackedRooms(socket);
+      releasePlayerFromRoom(socket.id);
+      socket.join(roomId);
+      socket.data.roomId = roomId;
+    }
+
+    whiteSocket.emit("match_found", { ...getPublicRoomState(room), roomId, you: "w" });
+    blackSocket.emit("match_found", { ...getPublicRoomState(room), roomId, you: "b" });
+    io.to(roomId).emit("room_update", getPublicRoomState(room));
+  }
+
+  emitQueueSize();
+}
+
 io.on("connection", (socket) => {
   socket.on("join_room", ({ roomId }, callback = () => {}) => {
     if (!roomId || typeof roomId !== "string") {
@@ -117,6 +165,7 @@ io.on("connection", (socket) => {
     }
 
     removeFromQueue(socket.id);
+    emitQueueSize();
     leaveTrackedRooms(socket);
     releasePlayerFromRoom(socket.id);
 
@@ -142,18 +191,13 @@ io.on("connection", (socket) => {
     socket.data.roomId = normalizedRoomId;
     activeMatchBySocket.set(socket.id, normalizedRoomId);
 
-    const payload = {
-      ...getPublicRoomState(room),
-      you: assignedColor
-    };
-
-    callback({ ok: true, ...payload });
+    callback({ ok: true, ...getPublicRoomState(room), you: assignedColor });
     io.to(normalizedRoomId).emit("room_update", getPublicRoomState(room));
   });
 
   socket.on("seek_match", (callback = () => {}) => {
-    if (activeMatchBySocket.get(socket.id)) {
-      callback({ ok: false, message: "You are already in a match." });
+    if (currentPlayerRoomId(socket.id)) {
+      callback({ ok: false, message: "Leave your current room before seeking." });
       return;
     }
 
@@ -163,57 +207,21 @@ io.on("connection", (socket) => {
     }
 
     seekQueue.push({ socketId: socket.id, createdAt: Date.now() });
-
-    if (seekQueue.length >= 2) {
-      const first = seekQueue.shift();
-      const second = seekQueue.shift();
-      const whiteFirst = Math.random() >= 0.5;
-      const whiteSocketId = whiteFirst ? first.socketId : second.socketId;
-      const blackSocketId = whiteFirst ? second.socketId : first.socketId;
-
-      const roomId = createMatchRoomId();
-      const room = createRoomState(roomId);
-      room.players.w = whiteSocketId;
-      room.players.b = blackSocketId;
-      rooms.set(roomId, room);
-
-      const whiteSocket = io.sockets.sockets.get(whiteSocketId);
-      const blackSocket = io.sockets.sockets.get(blackSocketId);
-
-      for (const currentSocket of [whiteSocket, blackSocket]) {
-        if (!currentSocket) continue;
-        leaveTrackedRooms(currentSocket);
-        releasePlayerFromRoom(currentSocket.id);
-        currentSocket.join(roomId);
-        currentSocket.data.roomId = roomId;
-        activeMatchBySocket.set(currentSocket.id, roomId);
-      }
-
-      if (whiteSocket) {
-        whiteSocket.emit("match_found", {
-          ...getPublicRoomState(room),
-          roomId,
-          you: "w"
-        });
-      }
-
-      if (blackSocket) {
-        blackSocket.emit("match_found", {
-          ...getPublicRoomState(room),
-          roomId,
-          you: "b"
-        });
-      }
-
-      io.to(roomId).emit("room_update", getPublicRoomState(room));
-    }
-
+    startMatchIfPossible();
     callback({ ok: true, status: "queued", queueSize: seekQueue.length });
   });
 
   socket.on("cancel_seek", (callback = () => {}) => {
     const removed = removeFromQueue(socket.id);
+    emitQueueSize();
     callback({ ok: true, removed, queueSize: seekQueue.length });
+  });
+
+  socket.on("leave_room", (callback = () => {}) => {
+    leaveTrackedRooms(socket);
+    releasePlayerFromRoom(socket.id);
+    socket.data.roomId = null;
+    callback({ ok: true });
   });
 
   socket.on("make_move", ({ roomId, move }, callback = () => {}) => {
@@ -265,7 +273,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     removeFromQueue(socket.id);
-    activeMatchBySocket.delete(socket.id);
+    emitQueueSize();
     releasePlayerFromRoom(socket.id);
   });
 });

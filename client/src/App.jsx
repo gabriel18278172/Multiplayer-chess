@@ -32,6 +32,7 @@ function App() {
   const [socket, setSocket] = useState(null);
   const [connection, setConnection] = useState("Connecting...");
   const [queueStatus, setQueueStatus] = useState("idle");
+  const [queueSize, setQueueSize] = useState(0);
 
   const [roomInput, setRoomInput] = useState(makeRoomCode());
   const [roomId, setRoomId] = useState("");
@@ -44,6 +45,7 @@ function App() {
 
   const [lastError, setLastError] = useState("");
   const [moveList, setMoveList] = useState([]);
+  const [boardWidth, setBoardWidth] = useState(560);
 
   const chess = useMemo(() => {
     const game = new Chess();
@@ -63,6 +65,20 @@ function App() {
   };
 
   useEffect(() => {
+    const recalcBoard = () => {
+      const viewport = window.innerWidth;
+      if (viewport <= 460) setBoardWidth(Math.min(360, viewport - 24));
+      else if (viewport <= 720) setBoardWidth(Math.min(460, viewport - 36));
+      else if (viewport <= 980) setBoardWidth(520);
+      else setBoardWidth(560);
+    };
+
+    recalcBoard();
+    window.addEventListener("resize", recalcBoard);
+    return () => window.removeEventListener("resize", recalcBoard);
+  }, []);
+
+  useEffect(() => {
     const nextSocket = io(SERVER_URL, {
       transports: ["websocket", "polling"]
     });
@@ -75,6 +91,7 @@ function App() {
       setQueueStatus("idle");
     });
 
+    nextSocket.on("queue_size", ({ size }) => setQueueSize(Number(size || 0)));
     nextSocket.on("room_update", ingestState);
     nextSocket.on("move_made", ingestState);
     nextSocket.on("game_restarted", ingestState);
@@ -119,17 +136,25 @@ function App() {
     if (!socket) return;
     setLastError("");
     setQueueStatus("seeking");
-    socket.emit("seek_match", (response) => {
-      if (!response?.ok) {
-        setQueueStatus("idle");
-        setLastError(response?.message || "Could not enter queue.");
-      }
+    socket.emit("leave_room", () => {
+      setRoomId("");
+      setPlayerColor(null);
+      socket.emit("seek_match", (response) => {
+        if (!response?.ok) {
+          setQueueStatus("idle");
+          setLastError(response?.message || "Could not enter queue.");
+        }
+      });
     });
   };
 
   const cancelSeek = () => {
     if (!socket) return;
-    socket.emit("cancel_seek", () => {
+    socket.emit("cancel_seek", (response) => {
+      if (!response?.ok) {
+        setLastError("Could not cancel queue.");
+        return;
+      }
       setQueueStatus("idle");
     });
   };
@@ -189,7 +214,7 @@ function App() {
 
       <header className="topbar">
         <h1>Realtime Chess Arena</h1>
-        <p>Fast matchmaking • Live multiplayer • Highly polished boardplay</p>
+        <p>Fast matchmaking • Live multiplayer • Mobile-ready boardplay</p>
       </header>
 
       <main className="layout">
@@ -232,7 +257,7 @@ function App() {
             <Chessboard
               id="multiplayer-chessboard"
               position={fen}
-              boardWidth={560}
+              boardWidth={boardWidth}
               onPieceDrop={onPieceDrop}
               arePiecesDraggable={bothPlayersReady && !isGameOver}
               boardOrientation={playerColor === "b" ? "black" : "white"}
@@ -248,6 +273,7 @@ function App() {
             <p>{getGameStatus(chess, isGameOver, turn)}</p>
             <p>Your side: {playerColor === "w" ? "White" : playerColor === "b" ? "Black" : "Not assigned"}</p>
             <p>Queue: {queueStatus}</p>
+            <p>Players searching: {queueSize}</p>
             <button onClick={requestRestart}>Restart Match</button>
           </div>
 
