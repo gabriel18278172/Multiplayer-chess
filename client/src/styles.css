@@ -125,6 +125,24 @@ body {
   font-size: 0.9rem;
 }
 
+
+.play-row {
+  display: flex;
+  gap: 0.7rem;
+  margin-bottom: 0.8rem;
+}
+
+.primary-play {
+  min-width: 10rem;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+
+button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
 .join-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -246,7 +264,25 @@ button.ghost {
     padding: 1rem;
   }
 
-  .join-row {
+  
+.play-row {
+  display: flex;
+  gap: 0.7rem;
+  margin-bottom: 0.8rem;
+}
+
+.primary-play {
+  min-width: 10rem;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+
+button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.join-row {
     grid-template-columns: 1fr;
   }
 

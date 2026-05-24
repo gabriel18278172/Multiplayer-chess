@@ -36,16 +36,19 @@ const io = new Server(httpServer, {
 });
 
 const rooms = new Map();
+const activeMatchBySocket = new Map();
+let seekQueue = [];
 
 function createRoomState(roomId) {
   return {
     id: roomId,
     game: new Chess(),
-    players: {
-      w: null,
-      b: null
-    }
+    players: { w: null, b: null }
   };
+}
+
+function createMatchRoomId() {
+  return `MATCH-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
 
 function getPublicRoomState(room) {
@@ -66,6 +69,40 @@ function resolveColor(room, socketId) {
   return null;
 }
 
+function removeFromQueue(socketId) {
+  const initialLen = seekQueue.length;
+  seekQueue = seekQueue.filter((entry) => entry.socketId !== socketId);
+  return initialLen !== seekQueue.length;
+}
+
+function leaveTrackedRooms(socket) {
+  for (const joinedRoomId of socket.rooms) {
+    if (joinedRoomId !== socket.id) socket.leave(joinedRoomId);
+  }
+}
+
+function releasePlayerFromRoom(socketId) {
+  for (const [roomId, room] of rooms.entries()) {
+    let changed = false;
+    if (room.players.w === socketId) {
+      room.players.w = null;
+      changed = true;
+    }
+    if (room.players.b === socketId) {
+      room.players.b = null;
+      changed = true;
+    }
+
+    if (!changed) continue;
+
+    io.to(roomId).emit("room_update", getPublicRoomState(room));
+
+    if (!room.players.w && !room.players.b) {
+      rooms.delete(roomId);
+    }
+  }
+}
+
 io.on("connection", (socket) => {
   socket.on("join_room", ({ roomId }, callback = () => {}) => {
     if (!roomId || typeof roomId !== "string") {
@@ -78,6 +115,10 @@ io.on("connection", (socket) => {
       callback({ ok: false, message: "Room code cannot be empty." });
       return;
     }
+
+    removeFromQueue(socket.id);
+    leaveTrackedRooms(socket);
+    releasePlayerFromRoom(socket.id);
 
     let room = rooms.get(normalizedRoomId);
     if (!room) {
@@ -99,6 +140,7 @@ io.on("connection", (socket) => {
 
     socket.join(normalizedRoomId);
     socket.data.roomId = normalizedRoomId;
+    activeMatchBySocket.set(socket.id, normalizedRoomId);
 
     const payload = {
       ...getPublicRoomState(room),
@@ -107,6 +149,71 @@ io.on("connection", (socket) => {
 
     callback({ ok: true, ...payload });
     io.to(normalizedRoomId).emit("room_update", getPublicRoomState(room));
+  });
+
+  socket.on("seek_match", (callback = () => {}) => {
+    if (activeMatchBySocket.get(socket.id)) {
+      callback({ ok: false, message: "You are already in a match." });
+      return;
+    }
+
+    if (seekQueue.some((entry) => entry.socketId === socket.id)) {
+      callback({ ok: true, status: "queued", queueSize: seekQueue.length });
+      return;
+    }
+
+    seekQueue.push({ socketId: socket.id, createdAt: Date.now() });
+
+    if (seekQueue.length >= 2) {
+      const first = seekQueue.shift();
+      const second = seekQueue.shift();
+      const whiteFirst = Math.random() >= 0.5;
+      const whiteSocketId = whiteFirst ? first.socketId : second.socketId;
+      const blackSocketId = whiteFirst ? second.socketId : first.socketId;
+
+      const roomId = createMatchRoomId();
+      const room = createRoomState(roomId);
+      room.players.w = whiteSocketId;
+      room.players.b = blackSocketId;
+      rooms.set(roomId, room);
+
+      const whiteSocket = io.sockets.sockets.get(whiteSocketId);
+      const blackSocket = io.sockets.sockets.get(blackSocketId);
+
+      for (const currentSocket of [whiteSocket, blackSocket]) {
+        if (!currentSocket) continue;
+        leaveTrackedRooms(currentSocket);
+        releasePlayerFromRoom(currentSocket.id);
+        currentSocket.join(roomId);
+        currentSocket.data.roomId = roomId;
+        activeMatchBySocket.set(currentSocket.id, roomId);
+      }
+
+      if (whiteSocket) {
+        whiteSocket.emit("match_found", {
+          ...getPublicRoomState(room),
+          roomId,
+          you: "w"
+        });
+      }
+
+      if (blackSocket) {
+        blackSocket.emit("match_found", {
+          ...getPublicRoomState(room),
+          roomId,
+          you: "b"
+        });
+      }
+
+      io.to(roomId).emit("room_update", getPublicRoomState(room));
+    }
+
+    callback({ ok: true, status: "queued", queueSize: seekQueue.length });
+  });
+
+  socket.on("cancel_seek", (callback = () => {}) => {
+    const removed = removeFromQueue(socket.id);
+    callback({ ok: true, removed, queueSize: seekQueue.length });
   });
 
   socket.on("make_move", ({ roomId, move }, callback = () => {}) => {
@@ -137,7 +244,7 @@ io.on("connection", (socket) => {
       const state = getPublicRoomState(room);
       io.to(room.id).emit("move_made", state);
       callback({ ok: true, ...state });
-    } catch (_err) {
+    } catch {
       callback({ ok: false, message: "Move failed." });
     }
   });
@@ -157,25 +264,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    for (const [roomId, room] of rooms.entries()) {
-      let changed = false;
-      if (room.players.w === socket.id) {
-        room.players.w = null;
-        changed = true;
-      }
-      if (room.players.b === socket.id) {
-        room.players.b = null;
-        changed = true;
-      }
-
-      if (!changed) continue;
-
-      io.to(roomId).emit("room_update", getPublicRoomState(room));
-
-      if (!room.players.w && !room.players.b) {
-        rooms.delete(roomId);
-      }
-    }
+    removeFromQueue(socket.id);
+    activeMatchBySocket.delete(socket.id);
+    releasePlayerFromRoom(socket.id);
   });
 });
 
