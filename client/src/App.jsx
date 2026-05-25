@@ -224,8 +224,8 @@ function App() {
               maxLength={14}
             />
             <button onClick={joinRoom}>Join Room</button>
-            <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
-              New Code
+            <button className="ghost" onClick={createAndJoinRoom}>
+              New & Join
             </button>
           </div>
 
