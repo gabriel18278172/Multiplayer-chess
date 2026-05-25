@@ -116,8 +116,13 @@ function App() {
     });
   };
 
-  const joinRoomByCode = (candidate) => {
+  const joinRoom = () => {
     if (!socket) return;
+    const candidate = roomInput.trim().toUpperCase();
+    if (!candidate) {
+      setLastError("Enter a room code first.");
+      return;
+    }
 
     socket.emit("join_room", { roomId: candidate }, (response) => {
       if (!response?.ok) {
@@ -129,25 +134,8 @@ function App() {
       setQueueStatus("matched");
       setRoomId(response.roomId);
       setPlayerColor(response.you);
-      setRoomInput(response.roomId);
       ingestState(response);
     });
-  };
-
-  const joinRoom = () => {
-    const candidate = roomInput.trim().toUpperCase();
-    if (!candidate) {
-      setLastError("Enter a room code first.");
-      return;
-    }
-
-    joinRoomByCode(candidate);
-  };
-
-  const createAndJoinRoom = () => {
-    const code = makeRoomCode();
-    setRoomInput(code);
-    joinRoomByCode(code);
   };
 
   const cancelSeek = () => {
