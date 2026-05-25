@@ -24,6 +24,10 @@ function getGameStatus(chess, isGameOver, turn) {
   return "Game over.";
 }
 
+function makeRoomCode() {
+  return `ROOM-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
 function App() {
   const [socket, setSocket] = useState(null);
   const [connection, setConnection] = useState("Connecting...");
@@ -31,6 +35,7 @@ function App() {
   const [queueSize, setQueueSize] = useState(0);
 
   const [roomId, setRoomId] = useState("");
+  const [roomInput, setRoomInput] = useState("");
   const [playerColor, setPlayerColor] = useState(null);
 
   const [fen, setFen] = useState("start");
@@ -92,6 +97,7 @@ function App() {
       setQueueStatus("matched");
       setRoomId(state.roomId);
       setPlayerColor(state.you);
+      setRoomInput(state.roomId);
       ingestState(state);
     });
 
@@ -110,6 +116,28 @@ function App() {
     });
   };
 
+  const joinRoom = () => {
+    if (!socket) return;
+    const candidate = roomInput.trim().toUpperCase();
+    if (!candidate) {
+      setLastError("Enter a room code first.");
+      return;
+    }
+
+    socket.emit("join_room", { roomId: candidate }, (response) => {
+      if (!response?.ok) {
+        setLastError(response?.message || "Could not join room.");
+        return;
+      }
+
+      setLastError("");
+      setQueueStatus("matched");
+      setRoomId(response.roomId);
+      setPlayerColor(response.you);
+      ingestState(response);
+    });
+  };
+
   const cancelSeek = () => {
     if (!socket) return;
     socket.emit("cancel_seek", (response) => {
@@ -119,6 +147,18 @@ function App() {
       }
       setQueueStatus("idle");
       setLastError("");
+    });
+  };
+
+  const requestRestart = () => {
+    if (!socket || !roomId) return;
+    socket.emit("restart_match", { roomId }, (response) => {
+      if (!response?.ok) {
+        setLastError(response?.message || "Could not restart.");
+        return;
+      }
+      setLastError("");
+      ingestState(response);
     });
   };
 
@@ -187,9 +227,6 @@ function App() {
             <button className="ghost" onClick={() => setRoomInput(makeRoomCode())}>
               New Code
             </button>
-            {queueStatus === "seeking" ? (
-              <button className="ghost" onClick={cancelSeek}>Cancel</button>
-            ) : null}
           </div>
 
           {lastError ? <div className="error-box">{lastError}</div> : null}
