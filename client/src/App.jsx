@@ -138,6 +138,26 @@ function App() {
     });
   };
 
+  const createAndJoinRoom = () => {
+    if (!socket) return;
+    const newRoomCode = makeRoomCode();
+    setRoomInput(newRoomCode);
+    setLastError("");
+
+    socket.emit("join_room", { roomId: newRoomCode }, (response) => {
+      if (!response?.ok) {
+        setLastError(response?.message || "Could not create room.");
+        return;
+      }
+
+      setLastError("");
+      setQueueStatus("matched");
+      setRoomId(response.roomId);
+      setPlayerColor(response.you);
+      ingestState(response);
+    });
+  };
+
   const cancelSeek = () => {
     if (!socket) return;
     socket.emit("cancel_seek", (response) => {
