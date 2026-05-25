@@ -76,9 +76,16 @@ function removeFromQueue(socketId) {
   return initialLen !== seekQueue.length;
 }
 
+function leaveTrackedRooms(socket) {
+  for (const roomId of socket.rooms) {
+    if (roomId !== socket.id) socket.leave(roomId);
+  }
+}
+
 function releasePlayerFromRoom(socketId) {
   for (const [roomId, room] of rooms.entries()) {
     let changed = false;
+
     if (room.players.w === socketId) {
       room.players.w = null;
       changed = true;
@@ -95,12 +102,6 @@ function releasePlayerFromRoom(socketId) {
     if (!room.players.w && !room.players.b) {
       rooms.delete(roomId);
     }
-  }
-}
-
-function leaveTrackedRooms(socket) {
-  for (const roomId of socket.rooms) {
-    if (roomId !== socket.id) socket.leave(roomId);
   }
 }
 
@@ -152,22 +153,18 @@ function startMatchIfPossible() {
 }
 
 io.on("connection", (socket) => {
+  emitQueueSize();
+
   socket.on("join_room", ({ roomId }, callback = () => {}) => {
     if (!roomId || typeof roomId !== "string") {
       callback({ ok: false, message: "Invalid room code." });
       return;
     }
 
-function releasePlayerFromRoom(socketId) {
-  for (const [roomId, room] of rooms.entries()) {
-    let changed = false;
-    if (room.players.w === socketId) {
-      room.players.w = null;
-      changed = true;
-    }
-    if (room.players.b === socketId) {
-      room.players.b = null;
-      changed = true;
+    const normalizedRoomId = roomId.trim().toUpperCase();
+    if (!normalizedRoomId) {
+      callback({ ok: false, message: "Invalid room code." });
+      return;
     }
 
     removeFromQueue(socket.id);
@@ -180,57 +177,25 @@ function releasePlayerFromRoom(socketId) {
       room = createRoomState(normalizedRoomId);
       rooms.set(normalizedRoomId, room);
     }
-  }
-}
 
-function leaveTrackedRooms(socket) {
-  for (const roomId of socket.rooms) {
-    if (roomId !== socket.id) socket.leave(roomId);
-  }
-}
+    let assignedColor = resolveColor(room, socket.id);
+    if (!assignedColor) {
+      if (!room.players.w) {
+        room.players.w = socket.id;
+        assignedColor = "w";
+      } else if (!room.players.b) {
+        room.players.b = socket.id;
+        assignedColor = "b";
+      }
+    }
 
-function clearPlayerState(socket) {
-  removeFromQueue(socket.id);
-  leaveTrackedRooms(socket);
-  releasePlayerFromRoom(socket.id);
-  socket.data.roomId = null;
-}
-
-function emitQueueSize() {
-  io.emit("queue_size", { size: seekQueue.length });
-}
-
-function startMatchIfPossible() {
-  while (seekQueue.length >= 2) {
-    const first = seekQueue.shift();
-    const second = seekQueue.shift();
-
-    const firstSocket = io.sockets.sockets.get(first.socketId);
-    const secondSocket = io.sockets.sockets.get(second.socketId);
-
-    if (!firstSocket || !secondSocket) continue;
-
-    const whiteFirst = Math.random() >= 0.5;
-    const whiteSocket = whiteFirst ? firstSocket : secondSocket;
-    const blackSocket = whiteFirst ? secondSocket : firstSocket;
-
-    const roomId = createMatchRoomId();
-    const room = createRoomState(roomId);
-    room.players.w = whiteSocket.id;
-    room.players.b = blackSocket.id;
-    rooms.set(roomId, room);
-
-    for (const socket of [whiteSocket, blackSocket]) {
-      removeFromQueue(socket.id);
-      leaveTrackedRooms(socket);
-      releasePlayerFromRoom(socket.id);
-      socket.join(roomId);
-      socket.data.roomId = roomId;
+    if (!assignedColor) {
+      callback({ ok: false, message: "Room is full." });
+      return;
     }
 
     socket.join(normalizedRoomId);
     socket.data.roomId = normalizedRoomId;
-    activeMatchBySocket.set(socket.id, normalizedRoomId);
 
     callback({ ok: true, ...getPublicRoomState(room), you: assignedColor });
     io.to(normalizedRoomId).emit("room_update", getPublicRoomState(room));
@@ -258,6 +223,24 @@ function startMatchIfPossible() {
     callback({ ok: true, removed, queueSize: seekQueue.length });
   });
 
+  socket.on("restart_match", ({ roomId }, callback = () => {}) => {
+    const room = rooms.get((roomId || "").trim().toUpperCase());
+    if (!room) {
+      callback({ ok: false, message: "Room not found." });
+      return;
+    }
+
+    if (!resolveColor(room, socket.id)) {
+      callback({ ok: false, message: "You are not part of this room." });
+      return;
+    }
+
+    room.game = new Chess();
+    const state = getPublicRoomState(room);
+    io.to(room.id).emit("room_update", state);
+    callback({ ok: true, ...state });
+  });
+
   socket.on("leave_room", (callback = () => {}) => {
     leaveTrackedRooms(socket);
     releasePlayerFromRoom(socket.id);
@@ -266,7 +249,7 @@ function startMatchIfPossible() {
   });
 
   socket.on("make_move", ({ roomId, move }, callback = () => {}) => {
-    const room = rooms.get((roomId || "").toUpperCase());
+    const room = rooms.get((roomId || "").trim().toUpperCase());
     if (!room) {
       callback({ ok: false, message: "Room not found." });
       return;
